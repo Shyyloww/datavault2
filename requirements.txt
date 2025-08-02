@@ -1,0 +1,10 @@
+# For the GUI
+customtkinter
+requests
+
+# For the builder
+pyinstaller
+
+# For the payload itself
+psutil
+requests
