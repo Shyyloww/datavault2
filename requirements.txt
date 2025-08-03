@@ -8,3 +8,7 @@ pyinstaller
 # For the payload itself
 psutil
 requests
+
+# For the server
+Flask
+gunicorn 
