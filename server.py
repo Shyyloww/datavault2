@@ -4,12 +4,15 @@ import json
 import os
 import threading
 
-# NOTE: All GUI-related imports like 'customtkinter' have been removed.
-
 app = Flask(__name__)
 
 # --- PERSISTENCE SETUP ---
-SESSIONS_FILE = 'sessions.json'
+# Use Render's recommended persistent storage directory
+DATA_DIR = '/var/data' 
+# Ensure the directory exists
+os.makedirs(DATA_DIR, exist_ok=True) 
+SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
+
 SESSIONS = {}
 sessions_lock = threading.Lock()
 
@@ -20,13 +23,18 @@ def load_sessions():
         if os.path.exists(SESSIONS_FILE):
             try:
                 with open(SESSIONS_FILE, 'r') as f:
-                    SESSIONS = json.load(f)
-                    print(f"[*] Loaded {len(SESSIONS)} sessions from {SESSIONS_FILE}")
+                    # Check if file is not empty
+                    if os.path.getsize(SESSIONS_FILE) > 0:
+                        SESSIONS = json.load(f)
+                        print(f"[*] Loaded {len(SESSIONS)} sessions from {SESSIONS_FILE}")
+                    else:
+                        print(f"[*] Sessions file is empty. Starting fresh.")
+                        SESSIONS = {}
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[!] Error loading sessions file: {e}. Starting fresh.")
                 SESSIONS = {}
         else:
-            print("[*] No sessions file found. Starting fresh.")
+            print(f"[*] No sessions file found at {SESSIONS_FILE}. Starting fresh.")
             SESSIONS = {}
 
 def save_sessions():
@@ -63,12 +71,16 @@ def heartbeat():
     if session_id in SESSIONS:
         with sessions_lock:
             SESSIONS[session_id]["last_seen"] = time.time()
-        save_sessions()
+        # Save less frequently on heartbeats to reduce disk I/O
+        # This is an optimization, but for simplicity we can save every time
+        save_sessions() 
     return jsonify({"status": "ok"}), 200
 
 @app.route('/api/get_sessions', methods=['GET'])
 def get_sessions():
-    return jsonify(list(SESSIONS.values()))
+    """Returns the current list of all sessions from the in-memory dictionary."""
+    with sessions_lock:
+        return jsonify(list(SESSIONS.values()))
 
 @app.route('/api/delete_session', methods=['POST'])
 def delete_session():
@@ -84,6 +96,7 @@ def delete_session():
 
 def run_server():
     load_sessions()
+    # The 'host' and 'port' are for local testing. Gunicorn on Render overrides this.
     app.run(host='0.0.0.0', port=5002)
 
 if __name__ == '__main__':
