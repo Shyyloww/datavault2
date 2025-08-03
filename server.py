@@ -7,10 +7,9 @@ import threading
 app = Flask(__name__)
 
 # --- PERSISTENCE SETUP ---
-# Use Render's recommended persistent storage directory
+# Render's persistent disk is mounted at this path automatically.
+# We do not need to create it ourselves.
 DATA_DIR = '/var/data' 
-# Ensure the directory exists
-os.makedirs(DATA_DIR, exist_ok=True) 
 SESSIONS_FILE = os.path.join(DATA_DIR, 'sessions.json')
 
 SESSIONS = {}
@@ -22,14 +21,14 @@ def load_sessions():
     with sessions_lock:
         if os.path.exists(SESSIONS_FILE):
             try:
-                with open(SESSIONS_FILE, 'r') as f:
-                    # Check if file is not empty
-                    if os.path.getsize(SESSIONS_FILE) > 0:
+                # Check if file is not empty before trying to load
+                if os.path.getsize(SESSIONS_FILE) > 0:
+                    with open(SESSIONS_FILE, 'r') as f:
                         SESSIONS = json.load(f)
-                        print(f"[*] Loaded {len(SESSIONS)} sessions from {SESSIONS_FILE}")
-                    else:
-                        print(f"[*] Sessions file is empty. Starting fresh.")
-                        SESSIONS = {}
+                    print(f"[*] Loaded {len(SESSIONS)} sessions from {SESSIONS_FILE}")
+                else:
+                    print(f"[*] Sessions file is empty. Starting fresh.")
+                    SESSIONS = {}
             except (json.JSONDecodeError, IOError) as e:
                 print(f"[!] Error loading sessions file: {e}. Starting fresh.")
                 SESSIONS = {}
@@ -56,10 +55,8 @@ def register():
         print(f"[*] [{time.strftime('%Y-%m-%d %H:%M:%S')}] New session registered: {data.get('hostname')}")
         with sessions_lock:
             SESSIONS[session_id] = {
-                "session_id": session_id,
-                "hostname": data.get("hostname"),
-                "data": data.get("data"),
-                "last_seen": time.time()
+                "session_id": session_id, "hostname": data.get("hostname"),
+                "data": data.get("data"), "last_seen": time.time()
             }
         save_sessions()
     return jsonify({"status": "ok"}), 200
@@ -71,14 +68,11 @@ def heartbeat():
     if session_id in SESSIONS:
         with sessions_lock:
             SESSIONS[session_id]["last_seen"] = time.time()
-        # Save less frequently on heartbeats to reduce disk I/O
-        # This is an optimization, but for simplicity we can save every time
         save_sessions() 
     return jsonify({"status": "ok"}), 200
 
 @app.route('/api/get_sessions', methods=['GET'])
 def get_sessions():
-    """Returns the current list of all sessions from the in-memory dictionary."""
     with sessions_lock:
         return jsonify(list(SESSIONS.values()))
 
@@ -96,7 +90,6 @@ def delete_session():
 
 def run_server():
     load_sessions()
-    # The 'host' and 'port' are for local testing. Gunicorn on Render overrides this.
     app.run(host='0.0.0.0', port=5002)
 
 if __name__ == '__main__':
